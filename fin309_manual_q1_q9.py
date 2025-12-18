@@ -7,7 +7,6 @@ for efficient and robust portfolio analysis.
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from scipy.optimize import minimize
 import scipy.stats as stats
 
 # Import PyPortfolioOpt modules
@@ -202,26 +201,24 @@ def trace_frontier(mu, cov, n_points=100):
     tuple
         (returns, volatilities) arrays for plotting
     """
-    # Use CLA for efficient frontier calculation
-    cla = CLA(mu, cov)
-    
-    # Get the efficient frontier points
-    frontier_returns = []
-    frontier_vols = []
-    
     # Generate frontier by varying target returns
     min_ret = np.min(mu)
     max_ret = np.max(mu)
     target_returns = np.linspace(min_ret, max_ret, n_points)
     
+    frontier_returns = []
+    frontier_vols = []
+    
     for target_ret in target_returns:
         try:
+            # Create a new CLA instance for each target return
             cla_temp = CLA(mu, cov)
             cla_temp.efficient_return(target_ret)
             ret, vol, _ = cla_temp.portfolio_performance(verbose=False)
             frontier_returns.append(ret)
             frontier_vols.append(vol)
-        except:
+        except (ValueError, Exception) as e:
+            # Skip target returns that are not achievable
             continue
     
     return np.array(frontier_returns), np.array(frontier_vols)
