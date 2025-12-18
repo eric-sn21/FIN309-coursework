@@ -1,7 +1,7 @@
 """
-FIN309 Portfolio Analysis - Manual Implementation (Q1-Q9)
-This module implements portfolio optimization using manual calculations
-with numpy and pandas, without external portfolio optimization libraries.
+FIN309 Portfolio Analysis - PyPortfolioOpt Implementation (Q1-Q9)
+This module implements portfolio optimization using PyPortfolioOpt library
+for efficient and robust portfolio analysis.
 """
 
 import pandas as pd
@@ -9,6 +9,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
 import scipy.stats as stats
+
+# Import PyPortfolioOpt modules
+from pypfopt import expected_returns, risk_models
+from pypfopt import EfficientFrontier
+from pypfopt import plotting
+from pypfopt import CLA
 
 
 def load_data(file_path):
@@ -48,11 +54,11 @@ def calculate_returns(prices):
     return returns
 
 
-# Q1: Calculate Expected Returns (Manual)
+# Q1: Calculate Expected Returns (PyPortfolioOpt)
 def calculate_expected_returns(prices):
     """
-    Calculate expected annual returns from historical prices.
-    Uses simple mean of historical returns, annualized.
+    Calculate expected annual returns from historical prices using PyPortfolioOpt.
+    Uses mean_historical_return which calculates the annualized mean (daily) historical return.
     
     Parameters:
     -----------
@@ -64,16 +70,16 @@ def calculate_expected_returns(prices):
     pd.Series
         Expected annual returns for each asset
     """
-    returns = calculate_returns(prices)
-    # Annualize assuming 252 trading days
-    mu = returns.mean() * 252
+    # Use PyPortfolioOpt's mean_historical_return
+    mu = expected_returns.mean_historical_return(prices)
     return mu
 
 
-# Q2: Calculate Covariance Matrix (Manual)
+# Q2: Calculate Covariance Matrix (PyPortfolioOpt)
 def calculate_covariance_matrix(prices):
     """
-    Calculate sample covariance matrix from historical prices.
+    Calculate sample covariance matrix from historical prices using PyPortfolioOpt.
+    Uses sample_cov which calculates the annualized sample covariance matrix.
     
     Parameters:
     -----------
@@ -85,16 +91,16 @@ def calculate_covariance_matrix(prices):
     pd.DataFrame
         Covariance matrix of returns (annualized)
     """
-    returns = calculate_returns(prices)
-    # Annualize the covariance matrix
-    cov = returns.cov() * 252
+    # Use PyPortfolioOpt's sample_cov
+    cov = risk_models.sample_cov(prices)
     return cov
 
 
-# Q3: Global Minimum Variance Portfolio (Manual)
+# Q3: Global Minimum Variance Portfolio (PyPortfolioOpt)
 def optimise_gmv(mu, cov):
     """
-    Find the Global Minimum Variance (GMV) portfolio using manual optimization.
+    Find the Global Minimum Variance (GMV) portfolio using PyPortfolioOpt.
+    Uses EfficientFrontier.min_volatility() method.
     
     Parameters:
     -----------
@@ -108,42 +114,34 @@ def optimise_gmv(mu, cov):
     dict
         Dictionary with 'weights', 'return', 'volatility', 'sharpe'
     """
-    n_assets = len(mu)
+    # Create EfficientFrontier object
+    ef = EfficientFrontier(mu, cov)
     
-    # Objective: minimize portfolio variance
-    def portfolio_variance(weights):
-        return weights.T @ cov @ weights
+    # Find minimum volatility portfolio
+    weights = ef.min_volatility()
     
-    # Constraints: weights sum to 1
-    constraints = {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
+    # Get cleaned weights
+    cleaned_weights = ef.clean_weights()
     
-    # Bounds: weights between 0 and 1 (long-only)
-    bounds = tuple((0, 1) for _ in range(n_assets))
+    # Get portfolio performance
+    portfolio_return, portfolio_vol, sharpe = ef.portfolio_performance(verbose=False)
     
-    # Initial guess: equal weights
-    initial_weights = np.array([1/n_assets] * n_assets)
-    
-    # Optimize
-    result = minimize(portfolio_variance, initial_weights, 
-                     method='SLSQP', bounds=bounds, constraints=constraints)
-    
-    weights = result.x
-    portfolio_return = np.dot(weights, mu)
-    portfolio_vol = np.sqrt(weights.T @ cov @ weights)
-    sharpe = portfolio_return / portfolio_vol if portfolio_vol > 0 else 0
+    # Convert cleaned weights to array
+    weights_array = np.array([cleaned_weights.get(asset, 0.0) for asset in mu.index])
     
     return {
-        'weights': weights,
+        'weights': weights_array,
         'return': portfolio_return,
         'volatility': portfolio_vol,
         'sharpe': sharpe
     }
 
 
-# Q4: Tangency Portfolio / Maximum Sharpe Ratio (Manual)
+# Q4: Tangency Portfolio / Maximum Sharpe Ratio (PyPortfolioOpt)
 def optimise_tangency(mu, cov, risk_free_rate=0.02):
     """
-    Find the Tangency Portfolio (Maximum Sharpe Ratio) using manual optimization.
+    Find the Tangency Portfolio (Maximum Sharpe Ratio) using PyPortfolioOpt.
+    Uses EfficientFrontier.max_sharpe() method.
     
     Parameters:
     -----------
@@ -159,46 +157,36 @@ def optimise_tangency(mu, cov, risk_free_rate=0.02):
     dict
         Dictionary with 'weights', 'return', 'volatility', 'sharpe'
     """
-    n_assets = len(mu)
+    # Create EfficientFrontier object
+    ef = EfficientFrontier(mu, cov)
     
-    # Objective: maximize Sharpe ratio (minimize negative Sharpe)
-    def negative_sharpe(weights):
-        portfolio_return = np.dot(weights, mu)
-        portfolio_vol = np.sqrt(weights.T @ cov @ weights)
-        sharpe = (portfolio_return - risk_free_rate) / portfolio_vol if portfolio_vol > 0 else 0
-        return -sharpe
+    # Find maximum Sharpe ratio portfolio
+    weights = ef.max_sharpe(risk_free_rate=risk_free_rate)
     
-    # Constraints: weights sum to 1
-    constraints = {'type': 'eq', 'fun': lambda w: np.sum(w) - 1}
+    # Get cleaned weights
+    cleaned_weights = ef.clean_weights()
     
-    # Bounds: weights between 0 and 1 (long-only)
-    bounds = tuple((0, 1) for _ in range(n_assets))
+    # Get portfolio performance
+    portfolio_return, portfolio_vol, sharpe = ef.portfolio_performance(
+        verbose=False, risk_free_rate=risk_free_rate
+    )
     
-    # Initial guess: equal weights
-    initial_weights = np.array([1/n_assets] * n_assets)
-    
-    # Optimize
-    result = minimize(negative_sharpe, initial_weights, 
-                     method='SLSQP', bounds=bounds, constraints=constraints)
-    
-    weights = result.x
-    portfolio_return = np.dot(weights, mu)
-    portfolio_vol = np.sqrt(weights.T @ cov @ weights)
-    sharpe = (portfolio_return - risk_free_rate) / portfolio_vol if portfolio_vol > 0 else 0
+    # Convert cleaned weights to array
+    weights_array = np.array([cleaned_weights.get(asset, 0.0) for asset in mu.index])
     
     return {
-        'weights': weights,
+        'weights': weights_array,
         'return': portfolio_return,
         'volatility': portfolio_vol,
         'sharpe': sharpe
     }
 
 
-# Q5: Trace Efficient Frontier (Manual)
+# Q5: Trace Efficient Frontier (PyPortfolioOpt)
 def trace_frontier(mu, cov, n_points=100):
     """
-    Generate the efficient frontier by computing minimum variance portfolios
-    for different target returns.
+    Generate the efficient frontier using PyPortfolioOpt's CLA algorithm.
+    CLA (Critical Line Algorithm) is more efficient for generating the frontier.
     
     Parameters:
     -----------
@@ -207,29 +195,32 @@ def trace_frontier(mu, cov, n_points=100):
     cov : pd.DataFrame or np.array
         Covariance matrix
     n_points : int
-        Number of points on the frontier
+        Number of points on the frontier (used for compatibility)
         
     Returns:
     --------
     tuple
         (returns, volatilities) arrays for plotting
     """
-    n_assets = len(mu)
+    # Use CLA for efficient frontier calculation
+    cla = CLA(mu, cov)
     
-    # Get range of returns from min to max possible
+    # Get the efficient frontier points
+    frontier_returns = []
+    frontier_vols = []
+    
+    # Generate frontier by varying target returns
     min_ret = np.min(mu)
     max_ret = np.max(mu)
     target_returns = np.linspace(min_ret, max_ret, n_points)
     
-    frontier_returns = []
-    frontier_vols = []
-    
     for target_ret in target_returns:
         try:
-            result = min_variance_with_target(mu, cov, target_ret)
-            if result is not None:
-                frontier_returns.append(result['return'])
-                frontier_vols.append(result['volatility'])
+            cla_temp = CLA(mu, cov)
+            cla_temp.efficient_return(target_ret)
+            ret, vol, _ = cla_temp.portfolio_performance(verbose=False)
+            frontier_returns.append(ret)
+            frontier_vols.append(vol)
         except:
             continue
     
@@ -238,7 +229,8 @@ def trace_frontier(mu, cov, n_points=100):
 
 def plot_efficient_frontier(mu, cov, show_assets=True):
     """
-    Plot the efficient frontier along with individual assets.
+    Plot the efficient frontier using PyPortfolioOpt's plotting functionality.
+    Uses plot_efficient_frontier helper method for visualization.
     
     Parameters:
     -----------
@@ -249,39 +241,36 @@ def plot_efficient_frontier(mu, cov, show_assets=True):
     show_assets : bool
         Whether to show individual assets on the plot
     """
-    # Generate frontier
-    frontier_rets, frontier_vols = trace_frontier(mu, cov)
+    # Use CLA (Critical Line Algorithm) for plotting the frontier
+    cla = CLA(mu, cov)
     
-    # Plot frontier
-    plt.figure(figsize=(10, 6))
-    plt.plot(frontier_vols, frontier_rets, 'b-', linewidth=2, label='Efficient Frontier')
+    # Plot using PyPortfolioOpt's built-in plotting
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax = plotting.plot_efficient_frontier(cla, ax=ax, show_assets=show_assets)
     
-    # Plot individual assets if requested
-    if show_assets:
-        asset_vols = np.sqrt(np.diag(cov))
-        plt.scatter(asset_vols, mu, c='red', marker='o', s=100, label='Assets')
-    
-    # Plot GMV and Tangency portfolios
+    # Add GMV and Tangency portfolios as markers
     gmv = optimise_gmv(mu, cov)
-    plt.scatter(gmv['volatility'], gmv['return'], c='green', marker='*', 
-                s=300, label='Min Volatility', zorder=5)
+    ax.scatter(gmv['volatility'], gmv['return'], c='green', marker='*', 
+               s=300, label='Min Volatility', zorder=5, edgecolors='black')
     
     tangency = optimise_tangency(mu, cov)
-    plt.scatter(tangency['volatility'], tangency['return'], c='gold', marker='*', 
-                s=300, label='Max Sharpe', zorder=5)
+    ax.scatter(tangency['volatility'], tangency['return'], c='gold', marker='*', 
+               s=300, label='Max Sharpe', zorder=5, edgecolors='black')
     
-    plt.xlabel('Volatility (Risk)')
-    plt.ylabel('Expected Return')
-    plt.title('Efficient Frontier')
-    plt.legend()
-    plt.grid(True, alpha=0.3)
+    ax.set_xlabel('Volatility (Risk)')
+    ax.set_ylabel('Expected Return')
+    ax.set_title('Efficient Frontier (PyPortfolioOpt)')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    plt.tight_layout()
     plt.show()
 
 
-# Q6: Minimum Variance Portfolio with Target Return (Manual)
+# Q6: Minimum Variance Portfolio with Target Return (PyPortfolioOpt)
 def min_variance_with_target(mu, cov, target_return):
     """
-    Find the minimum variance portfolio that achieves a target return.
+    Find the minimum variance portfolio that achieves a target return using PyPortfolioOpt.
+    Uses EfficientFrontier.efficient_return() method.
     
     Parameters:
     -----------
@@ -297,42 +286,31 @@ def min_variance_with_target(mu, cov, target_return):
     dict
         Dictionary with 'weights', 'return', 'volatility', 'sharpe'
     """
-    n_assets = len(mu)
-    
-    # Objective: minimize portfolio variance
-    def portfolio_variance(weights):
-        return weights.T @ cov @ weights
-    
-    # Constraints: weights sum to 1 AND portfolio return equals target
-    constraints = [
-        {'type': 'eq', 'fun': lambda w: np.sum(w) - 1},
-        {'type': 'eq', 'fun': lambda w: np.dot(w, mu) - target_return}
-    ]
-    
-    # Bounds: weights between 0 and 1 (long-only)
-    bounds = tuple((0, 1) for _ in range(n_assets))
-    
-    # Initial guess: equal weights
-    initial_weights = np.array([1/n_assets] * n_assets)
-    
-    # Optimize
-    result = minimize(portfolio_variance, initial_weights, 
-                     method='SLSQP', bounds=bounds, constraints=constraints)
-    
-    if not result.success:
+    try:
+        # Create EfficientFrontier object
+        ef = EfficientFrontier(mu, cov)
+        
+        # Find efficient portfolio with target return
+        weights = ef.efficient_return(target_return)
+        
+        # Get cleaned weights
+        cleaned_weights = ef.clean_weights()
+        
+        # Get portfolio performance
+        portfolio_return, portfolio_vol, sharpe = ef.portfolio_performance(verbose=False)
+        
+        # Convert cleaned weights to array
+        weights_array = np.array([cleaned_weights.get(asset, 0.0) for asset in mu.index])
+        
+        return {
+            'weights': weights_array,
+            'return': portfolio_return,
+            'volatility': portfolio_vol,
+            'sharpe': sharpe
+        }
+    except Exception as e:
+        # Return None if target return is not achievable
         return None
-    
-    weights = result.x
-    portfolio_return = np.dot(weights, mu)
-    portfolio_vol = np.sqrt(weights.T @ cov @ weights)
-    sharpe = portfolio_return / portfolio_vol if portfolio_vol > 0 else 0
-    
-    return {
-        'weights': weights,
-        'return': portfolio_return,
-        'volatility': portfolio_vol,
-        'sharpe': sharpe
-    }
 
 
 # Q7-Q9: CAPM Analysis and Additional Portfolio Statistics
@@ -461,7 +439,7 @@ def main():
     
     # Q1: Calculate Expected Returns
     print("\n" + "="*80)
-    print("Q1: Expected Returns (Manual Calculation)")
+    print("Q1: Expected Returns (PyPortfolioOpt)")
     print("="*80)
     mu = calculate_expected_returns(df)
     print("\nExpected Annual Returns:")
@@ -470,7 +448,7 @@ def main():
     
     # Q2: Calculate Covariance Matrix
     print("\n" + "="*80)
-    print("Q2: Covariance Matrix (Manual Calculation)")
+    print("Q2: Covariance Matrix (PyPortfolioOpt)")
     print("="*80)
     cov = calculate_covariance_matrix(df)
     print("\nCovariance Matrix:")
@@ -480,7 +458,7 @@ def main():
     print("\n" + "="*80)
     print("Q3: Global Minimum Variance (GMV) Portfolio")
     print("="*80)
-    gmv = optimise_gmv(mu.values, cov.values)
+    gmv = optimise_gmv(mu, cov)
     print("\nGMV Portfolio Weights:")
     for i, (asset, weight) in enumerate(zip(df.columns, gmv['weights'])):
         print(f"  {asset}: {weight:.4f} ({weight*100:.2f}%)")
@@ -493,7 +471,7 @@ def main():
     print("Q4: Tangency Portfolio (Maximum Sharpe Ratio)")
     print("="*80)
     risk_free_rate = 0.02  # 2% risk-free rate
-    tangency = optimise_tangency(mu.values, cov.values, risk_free_rate)
+    tangency = optimise_tangency(mu, cov, risk_free_rate)
     print(f"\nRisk-free rate: {risk_free_rate:.4f} ({risk_free_rate*100:.2f}%)")
     print("\nTangency Portfolio Weights:")
     for i, (asset, weight) in enumerate(zip(df.columns, tangency['weights'])):
@@ -507,7 +485,7 @@ def main():
     print("Q5: Efficient Frontier")
     print("="*80)
     print("\nGenerating efficient frontier plot...")
-    plot_efficient_frontier(mu.values, cov.values, show_assets=True)
+    plot_efficient_frontier(mu, cov, show_assets=True)
     
     # Q6: Minimum Variance Portfolio with Target Return
     print("\n" + "="*80)
@@ -515,7 +493,7 @@ def main():
     print("="*80)
     target_return = 0.15  # 15% target return
     print(f"\nTarget Return: {target_return:.4f} ({target_return*100:.2f}%)")
-    target_portfolio = min_variance_with_target(mu.values, cov.values, target_return)
+    target_portfolio = min_variance_with_target(mu, cov, target_return)
     if target_portfolio:
         print("\nTarget Portfolio Weights:")
         for i, (asset, weight) in enumerate(zip(df.columns, target_portfolio['weights'])):
